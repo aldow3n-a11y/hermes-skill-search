@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hermes-skill-search — semantic skill discovery for Hermes Agent</title>
+<meta name="description" content="Semantic skill discovery for Hermes Agent: find the right skill by intent, not exact name. A 45MB local embedding model, a 2.5MB SQLite index, ~130ms per query. No GPU, no new services.">
+<style>
+/* ============ tokens ============ */
+:root{
+  --bg:        oklch(0.155 0.006 85);
+  --bg-2:      oklch(0.185 0.007 85);
+  --surface:   oklch(0.215 0.008 85);
+  --surface-2: oklch(0.255 0.009 85);
+  --ink:       oklch(0.93 0.008 85);
+  --muted:     oklch(0.70 0.015 85);
+  --faint:     oklch(0.55 0.015 85);
+  --border:    oklch(0.32 0.01 85);
+  --accent:        oklch(0.84 0.15 80);
+  --accent-strong: oklch(0.90 0.16 80);
+  --accent-dim:    oklch(0.84 0.15 80 / 0.13);
+  --accent-line:   oklch(0.84 0.15 80 / 0.35);
+  --good:      oklch(0.78 0.12 150);
+  --font-sans: "Aptos", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, monospace;
+  --radius: 12px;
+  --wrap: 1080px;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+html{ scroll-behavior:smooth; }
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font-sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+::selection{ background:var(--accent); color:#1a1405; }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+a{ color:var(--accent); text-decoration:none; }
+a:hover{ color:var(--accent-strong); }
+.wrap{ max-width:var(--wrap); margin:0 auto; padding-inline:clamp(20px, 4vw, 40px); }
+.mono{ font-family:var(--font-mono); }
+code{ font-family:var(--font-mono); font-size:0.9em; }
+
+/* ============ nav ============ */
+.nav{
+  position:sticky; top:0; z-index:50;
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
+}
+.nav-in{
+  display:flex; align-items:center; gap:24px;
+  height:60px;
+}
+.brand{
+  display:flex; align-items:center; gap:10px;
+  color:var(--ink); font-family:var(--font-mono); font-size:14px; font-weight:600;
+  letter-spacing:-0.01em;
+}
+.brand:hover{ color:var(--ink); }
+.brand-dot{
+  width:9px; height:9px; border-radius:50%;
+  background:var(--accent);
+  animation:dotPulse 2s ease-in-out infinite;
+}
+@keyframes dotPulse{
+  0%,100%{ box-shadow:0 0 0 0 var(--accent-line); }
+  50%{ box-shadow:0 0 0 7px transparent; }
+}
+.nav-links{ display:flex; gap:22px; margin-left:auto; align-items:center; }
+.nav-links a{ color:var(--muted); font-size:14px; }
+.nav-links a:hover{ color:var(--ink); }
+.btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-height:44px; padding:10px 20px;
+  border-radius:8px; border:1px solid var(--border);
+  font-family:var(--font-sans); font-size:14.5px; font-weight:600;
+  color:var(--ink); background:transparent;
+  cursor:pointer; transition:border-color .15s, background .15s, transform .15s, color .15s;
+  text-decoration:none;
+}
+.btn:hover{ border-color:var(--accent-line); color:var(--ink); transform:translateY(-1px); }
+.btn-primary{
+  background:var(--accent); border-color:var(--accent); color:#1a1405;
+}
+.btn-primary:hover{ background:var(--accent-strong); border-color:var(--accent-strong); color:#1a1405; }
+.btn .gh{ font-family:var(--font-mono); font-size:13px; opacity:.75; margin-right:8px; }
+
+/* ============ hero ============ */
+.hero{
+  position:relative;
+  overflow:hidden;
+  border-bottom:1px solid var(--border);
+  background:
+    radial-gradient(600px 340px at 78% 12%, var(--accent-dim), transparent 70%),
+    var(--bg);
+}
+.scanline{
+  position:absolute; left:0; right:0; height:1px; top:-2%;
+  background:linear-gradient(90deg, transparent, var(--accent-line), transparent);
+  animation:scan 3s linear infinite;
+  pointer-events:none;
+}
+@keyframes scan{ 0%{ top:-2%; } 100%{ top:102%; } }
+.hero-in{
+  display:grid; grid-template-columns:1.04fr 0.96fr; gap:clamp(32px, 5vw, 64px);
+  align-items:center;
+  padding-block:clamp(56px, 9vh, 104px);
+}
+.eyebrow{
+  display:inline-flex; align-items:center; gap:9px;
+  font-family:var(--font-mono); font-size:12.5px; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--accent);
+  border:1px solid var(--accent-line); border-radius:999px;
+  padding:6px 13px; background:var(--accent-dim);
+}
+.eyebrow .live{
+  width:7px; height:7px; border-radius:50%; background:var(--accent);
+  animation:dotPulse 1.6s ease-in-out infinite;
+}
+.hero h1{
+  margin-top:22px;
+  font-size:clamp(2.15rem, 4.6vw, 3.4rem);
+  line-height:1.08; letter-spacing:-0.025em; font-weight:750;
+  text-wrap:balance;
+}
+.grad{
+  background:linear-gradient(100deg, var(--accent-strong) 0%, var(--accent) 45%, oklch(0.78 0.13 60) 100%);
+  background-size:200% 100%;
+  -webkit-background-clip:text; background-clip:text;
+  -webkit-text-fill-color:transparent; color:transparent;
+  animation:gradShift 6s ease-in-out infinite alternate;
+}
+@keyframes gradShift{ from{ background-position:0% 0; } to{ background-position:100% 0; } }
+.hero p.lede{
+  margin-top:20px; max-width:52ch;
+  color:var(--muted); font-size:clamp(1rem, 1.4vw, 1.13rem); line-height:1.65;
+}
+.hero p.lede strong{ color:var(--ink); font-weight:600; }
+.hero-cta{ display:flex; flex-wrap:wrap; gap:12px; margin-top:30px; }
+.hero-fact{
+  margin-top:26px; font-family:var(--font-mono); font-size:12.5px; color:var(--faint);
+  display:flex; flex-wrap:wrap; gap:6px 18px;
+}
+.hero-fact b{ color:var(--muted); font-weight:600; }
+
+/* terminal */
+.term{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:0 24px 60px -24px oklch(0 0 0 / 0.65);
+  overflow:hidden;
+  animation:panelIn .6s cubic-bezier(.2,.7,.2,1) .1s backwards;
+}
+@keyframes panelIn{ from{ opacity:0; transform:translateY(16px) scale(.985); } to{ opacity:1; transform:none; } }
+.term-head{
+  display:flex; align-items:center; gap:7px;
+  padding:11px 14px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-2);
+}
+.term-head .dot{ width:10px; height:10px; border-radius:50%; background:var(--surface-2); border:1px solid var(--border); }
+.term-title{
+  margin-left:8px; font-family:var(--font-mono); font-size:11.5px; color:var(--faint);
+  letter-spacing:0.02em;
+}
+.term-body{ padding:18px 18px 20px; font-family:var(--font-mono); font-size:13px; line-height:1.75; }
+.t-line{ color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.t-line .dim{ color:var(--faint); }
+.t-line .prompt{ color:var(--accent); margin-right:8px; }
+.caret{
+  display:inline-block; width:8px; height:15px; margin-left:6px;
+  vertical-align:-2px; background:var(--accent);
+  animation:blink 1.05s steps(1) infinite;
+}
+@keyframes blink{ 0%,55%{ opacity:1; } 56%,100%{ opacity:0; } }
+.t-line{ opacity:0; animation:lineIn .35s ease forwards; }
+.t-line.l1{ animation-delay:.25s; }
+.t-line.l2{ animation-delay:.65s; }
+.t-line.l3{ animation-delay:.95s; }
+.t-line.l4{ animation-delay:1.25s; }
+@keyframes lineIn{ from{ opacity:0; transform:translateY(5px); } to{ opacity:1; transform:none; } }
+.t-results{
+  margin:14px 0 4px;
+  border:1px solid var(--border); border-radius:8px;
+  background:var(--bg-2); overflow:hidden;
+}
+.t-row{
+  display:grid; grid-template-columns:26px 64px 1fr; gap:10px;
+  padding:8px 12px; align-items:baseline;
+  border-bottom:1px solid var(--border);
+  opacity:0; animation:rowIn .4s cubic-bezier(.2,.7,.2,1) forwards;
+}
+.t-row:last-child{ border-bottom:none; }
+.t-row.r1{ animation-delay:1.6s; }
+.t-row.r2{ animation-delay:1.8s; }
+.t-row.r3{ animation-delay:2.0s; }
+@keyframes rowIn{ from{ opacity:0; transform:translateX(-10px); } to{ opacity:1; transform:none; } }
+.t-row .idx{ color:var(--faint); font-size:12px; }
+.t-row .score{ color:var(--accent); font-size:12.5px; }
+.t-row .name{ color:var(--ink); font-size:12.5px; }
+.t-row.r1 .name{ color:var(--accent-strong); }
+.status{
+  margin-top:14px; color:var(--good);
+  display:flex; align-items:center; gap:9px;
+  opacity:0; animation:lineIn .35s ease 2.35s forwards;
+}
+.status .live{
+  width:7px; height:7px; border-radius:50%; background:var(--good);
+  animation:dotPulse 1.6s ease-in-out infinite;
+}
+
+/* ============ section scaffolding ============ */
+section{ padding-block:clamp(56px, 8vh, 92px); }
+.sec-head{ max-width:640px; }
+.sec-kicker{
+  font-family:var(--font-mono); font-size:12.5px; letter-spacing:0.1em;
+  text-transform:uppercase; color:var(--accent);
+}
+.sec-head h2{
+  margin-top:12px; font-size:clamp(1.6rem, 3vw, 2.3rem);
+  line-height:1.15; letter-spacing:-0.02em; font-weight:720; text-wrap:balance;
+}
+.sec-head p{ margin-top:14px; color:var(--muted); font-size:1.02rem; line-height:1.65; }
+.reveal{ opacity:0; transform:translateY(16px); transition:opacity .55s ease, transform .55s ease; transition-delay:var(--d, 0s); }
+.reveal.in{ opacity:1; transform:none; }
+
+/* ============ problem: token tax ============ */
+.problem{ border-bottom:1px solid var(--border); background:var(--bg-2); }
+.problem-grid{
+  display:grid; grid-template-columns:1fr 1fr; gap:clamp(32px, 5vw, 64px);
+  align-items:center; margin-top:40px;
+}
+.taxbar{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:22px 22px 18px;
+}
+.taxbar-label{
+  font-family:var(--font-mono); font-size:11.5px; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:14px;
+}
+.taxbar-track{
+  display:flex; height:38px; border-radius:7px; overflow:hidden;
+  border:1px solid var(--border);
+}
+.taxbar-track span{
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-size:11px; color:var(--faint);
+  white-space:nowrap; overflow:hidden;
+}
+.tax-seg-base{ flex:0 0 52%; background:var(--surface-2); }
+.tax-seg-skills{
+  flex:0 0 33%; background:var(--accent-dim);
+  color:var(--accent) !important; font-weight:600;
+  border-inline:1px solid var(--accent-line);
+  animation:taxPulse 2.4s ease-in-out infinite;
+}
+@keyframes taxPulse{
+  0%,100%{ box-shadow:inset 0 0 0 0 var(--accent-line); }
+  50%{ box-shadow:inset 0 0 0 1.5px var(--accent-line); }
+}
+.tax-seg-user{ flex:1; background:var(--surface-2); }
+.taxbar-note{
+  margin-top:14px; display:flex; align-items:center; gap:9px;
+  font-family:var(--font-mono); font-size:12.5px; color:var(--accent);
+}
+.taxbar-note .live{ width:7px; height:7px; border-radius:50%; background:var(--accent); animation:dotPulse 1.6s ease-in-out infinite; }
+.taxbar-legend{
+  margin-top:10px; display:flex; gap:18px; flex-wrap:wrap;
+  font-family:var(--font-mono); font-size:11.5px; color:var(--faint);
+}
+.taxbar-legend i{ font-style:normal; }
+.taxbar-legend .k{ color:var(--muted); }
+
+/* ============ pipeline ============ */
+.pipeline{ border-bottom:1px solid var(--border); }
+.steps{
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:18px;
+  margin-top:44px;
+}
+.step{
+  position:relative;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:20px 18px 18px;
+  min-height:150px;
+}
+.step::after{
+  content:"→";
+  position:absolute; right:-19px; top:50%; transform:translateY(-50%);
+  color:var(--accent); font-family:var(--font-mono); font-size:17px;
+  z-index:2; text-shadow:0 0 12px var(--accent-line);
+}
+.steps .step:last-child::after{ display:none; }
+.step-num{
+  font-family:var(--font-mono); font-size:12px; color:var(--accent);
+  letter-spacing:0.08em;
+}
+.step h3{ margin-top:10px; font-size:1.02rem; font-weight:650; letter-spacing:-0.01em; }
+.step p{ margin-top:8px; font-size:13.5px; color:var(--muted); line-height:1.55; }
+.step code{
+  display:block; margin-top:10px; font-size:12px; color:var(--accent-strong);
+  background:var(--bg-2); border:1px solid var(--border); border-radius:6px;
+  padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.step .hits{ margin-top:10px; font-family:var(--font-mono); font-size:11.5px; color:var(--faint); line-height:1.7; }
+.step .hits b{ color:var(--accent); font-weight:600; }
+
+/* ============ benchmark ============ */
+.bench{ border-bottom:1px solid var(--border); background:var(--bg-2); }
+.table-scroll{ overflow-x:auto; margin-top:40px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); }
+table{ width:100%; border-collapse:collapse; min-width:640px; }
+caption{
+  text-align:left; padding:14px 18px 0; font-family:var(--font-mono);
+  font-size:11.5px; color:var(--faint); letter-spacing:0.06em; text-transform:uppercase;
+}
+th{
+  text-align:left; padding:12px 18px; font-size:11.5px; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--muted); font-weight:600;
+  border-bottom:1px solid var(--border); white-space:nowrap;
+}
+td{
+  padding:13px 18px; border-bottom:1px solid var(--border);
+  font-size:14px; vertical-align:middle;
+}
+tbody tr:last-child td{ border-bottom:none; }
+td.model{ font-family:var(--font-mono); font-size:13px; color:var(--ink); white-space:nowrap; }
+td.num{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap; }
+tr.chosen td{ background:var(--accent-dim); }
+tr.chosen td.model{ color:var(--accent-strong); font-weight:600; }
+.verdict{ font-size:13px; color:var(--muted); white-space:nowrap; }
+.verdict.chosen{ color:var(--accent-strong); font-weight:600; }
+.verdict .tick{ color:var(--good); }
+.size-cell{ display:flex; align-items:center; gap:10px; min-width:150px; }
+.size-track{ flex:1; height:8px; border-radius:4px; background:var(--bg-2); overflow:hidden; }
+.size-bar{
+  display:block; height:100%; width:var(--w);
+  background:linear-gradient(90deg, var(--accent), var(--accent-strong));
+  border-radius:4px; transform-origin:left; transform:scaleX(0);
+}
+.in .size-bar{ animation:grow .7s cubic-bezier(.2,.7,.2,1) forwards; animation-delay:var(--d, 0s); }
+@keyframes grow{ to{ transform:scaleX(1); } }
+tr.chosen .size-bar{ background:var(--accent-strong); }
+.bench-note{
+  margin-top:14px; font-family:var(--font-mono); font-size:11.5px; color:var(--faint);
+}
+.bench-note b{ color:var(--muted); font-weight:600; }
+
+/* ============ specs ============ */
+.specs{ border-bottom:1px solid var(--border); }
+.specs-grid{
+  display:grid; grid-template-columns:repeat(5, 1fr);
+  margin-top:44px; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); overflow:hidden;
+}
+.spec{
+  padding:26px 20px 24px; text-align:left;
+  border-right:1px solid var(--border);
+}
+.spec:last-child{ border-right:none; }
+.spec .n{
+  font-family:var(--font-mono); font-size:clamp(1.7rem, 2.6vw, 2.2rem);
+  font-weight:650; letter-spacing:-0.02em; color:var(--accent-strong);
+  font-variant-numeric:tabular-nums;
+}
+.spec .n small{ font-size:0.62em; color:var(--accent); }
+.spec .l{ margin-top:6px; font-size:12.5px; color:var(--muted); line-height:1.45; }
+.spec .l b{ color:var(--ink); font-weight:600; }
+
+/* ============ install ============ */
+.install{ border-bottom:1px solid var(--border); }
+.install-grid{
+  display:grid; grid-template-columns:0.9fr 1.1fr; gap:clamp(32px, 5vw, 64px);
+  align-items:start; margin-top:40px;
+}
+.prereq{
+  margin-top:22px; list-style:none;
+  border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); overflow:hidden;
+}
+.prereq li{
+  display:flex; align-items:center; gap:11px;
+  padding:13px 16px; font-size:14px; color:var(--muted);
+  border-bottom:1px solid var(--border);
+}
+.prereq li:last-child{ border-bottom:none; }
+.prereq .tick{ color:var(--good); font-family:var(--font-mono); font-weight:700; }
+.prereq code{ color:var(--ink); }
+.term.install-term{ position:relative; }
+.term.install-term .term-body{ padding:16px 18px 18px; }
+.cmd{ display:block; white-space:pre-wrap; word-break:break-all; }
+.cmd .p{ color:var(--accent); }
+.cmd .cm{ color:var(--ink); }
+.cmd .co{ color:var(--faint); }
+.copy-btn{
+  position:absolute; top:8px; right:8px;
+  min-height:30px; padding:4px 12px;
+  font-family:var(--font-mono); font-size:11.5px;
+  color:var(--muted); background:var(--bg-2);
+  border:1px solid var(--border); border-radius:6px; cursor:pointer;
+  transition:color .15s, border-color .15s;
+}
+.copy-btn:hover{ color:var(--accent-strong); border-color:var(--accent-line); }
+
+/* ============ footer ============ */
+footer{ padding-block:34px; }
+.foot-in{
+  display:flex; flex-wrap:wrap; gap:10px 24px; align-items:center;
+  font-family:var(--font-mono); font-size:12.5px; color:var(--faint);
+}
+.foot-in .brand-dot{ width:7px; height:7px; }
+.foot-in a{ color:var(--muted); }
+.foot-in a:hover{ color:var(--accent-strong); }
+.foot-in .sp{ margin-left:auto; }
+
+/* ============ responsive ============ */
+@media (max-width: 900px){
+  .hero-in, .problem-grid, .install-grid{ grid-template-columns:1fr; }
+  .steps{ grid-template-columns:1fr 1fr; }
+  .step::after{ content:"↓"; right:auto; left:50%; top:auto; bottom:-21px; transform:translateX(-50%); }
+  .steps .step:nth-child(2)::after{ display:block; }
+  .steps .step:nth-child(3)::after{ display:block; }
+  .specs-grid{ grid-template-columns:repeat(2, 1fr); }
+  .spec{ border-right:1px solid var(--border); border-bottom:1px solid var(--border); }
+  .spec:nth-child(2n){ border-right:none; }
+  .spec:nth-child(5){ border-bottom:none; }
+}
+@media (max-width: 640px){
+  .nav-links a:not(.btn){ display:none; }
+  .steps{ grid-template-columns:1fr; }
+  .steps .step::after{ display:block; }
+  .specs-grid{ grid-template-columns:1fr; }
+  .spec{ border-right:none; }
+  .spec:nth-child(5){ border-bottom:1px solid var(--border); }
+  .term-body{ font-size:12px; }
+  .t-row{ grid-template-columns:22px 56px 1fr; }
+}
+
+/* ============ reduced motion ============ */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+  }
+  html{ scroll-behavior:auto; }
+  .reveal{ opacity:1; transform:none; }
+  .t-line, .t-row, .status{ opacity:1; }
+  .size-bar{ transform:none; }
+}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <span class="brand-dot" aria-hidden="true"></span>
+      hermes-skill-search
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#why">Why</a>
+      <a href="#how">How</a>
+      <a href="#models">Models</a>
+      <a href="#install">Install</a>
+      <a class="btn" href="https://github.com/aldow3n-a11y/hermes-skill-search" target="_blank" rel="noopener">
+        <span class="gh" aria-hidden="true">gh:</span>GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" aria-label="Introduction">
+    <div class="scanline" aria-hidden="true"></div>
+    <div class="wrap hero-in">
+      <div>
+        <span class="eyebrow"><span class="live" aria-hidden="true"></span> semantic skill discovery · v0.1</span>
+        <h1>Find the right skill <span class="grad">by intent</span>, not by name.</h1>
+        <p class="lede">
+          Hermes Agent ships with <strong>296 skills</strong> — and its system prompt eagerly lists every one of them.
+          <strong>hermes-skill-search</strong> replaces that dead weight with a <strong>~130ms semantic lookup</strong>:
+          a 45MB local embedding model, a 2.5MB SQLite index, one tool call. No GPU, no new services.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#install">Get started</a>
+          <a class="btn" href="https://github.com/aldow3n-a11y/hermes-skill-search" target="_blank" rel="noopener">
+            <span class="gh" aria-hidden="true">gh:</span>View on GitHub
+          </a>
+        </div>
+        <p class="hero-fact">
+          <span><b>296</b> skills indexed</span>
+          <span><b>2.5MB</b> SQLite index</span>
+          <span><b>45MB</b> model</span>
+          <span><b>MIT</b> license</span>
+        </p>
+      </div>
+
+      <div class="term" role="img" aria-label="Animated demo: skill_search returns three ranked results in 130 milliseconds">
+        <div class="term-head">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="term-title">skill_search.py — local index</span>
+        </div>
+        <div class="term-body">
+          <p class="t-line l1"><span class="prompt">$</span>skill_search("plan a feature safely")<span class="caret" aria-hidden="true"></span></p>
+          <p class="t-line l2"><span class="dim">·</span> embedding query <span class="dim">— 45MB model, local</span></p>
+          <p class="t-line l3"><span class="dim">·</span> scanning 296 skills <span class="dim">— 2.5MB index</span></p>
+          <p class="t-line l4"><span class="dim">·</span> ranking <span class="dim">— 130ms</span></p>
+          <div class="t-results">
+            <div class="t-row r1"><span class="idx">1</span><span class="score">0.438</span><span class="name">omh-plan</span></div>
+            <div class="t-row r2"><span class="idx">2</span><span class="score">0.390</span><span class="name">spike</span></div>
+            <div class="t-row r3"><span class="idx">3</span><span class="score">0.367</span><span class="name">competitive-landscape-check</span></div>
+          </div>
+          <p class="status"><span class="live" aria-hidden="true"></span> 3 results in 130ms</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ WHY / TOKEN TAX ============ -->
+  <section class="problem" id="why" aria-labelledby="why-h">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="sec-kicker">The problem</p>
+        <h2 id="why-h">Every session pays for the whole catalog.</h2>
+        <p>
+          Hermes builds an eager <code>&lt;available_skills&gt;</code> index into every system prompt — every skill
+          name and description, paid as tokens on every API call. With 200+ skills that's
+          <strong>8–12k tokens of dead weight per session</strong>, whether or not a single skill gets used.
+        </p>
+      </div>
+      <div class="problem-grid">
+        <div class="taxbar reveal" style="--d:.1s">
+          <p class="taxbar-label">system prompt anatomy — one API call</p>
+          <div class="taxbar-track" aria-hidden="true">
+            <span class="tax-seg-base">system prompt</span>
+            <span class="tax-seg-skills">available_skills</span>
+            <span class="tax-seg-user">user msg</span>
+          </div>
+          <p class="taxbar-note"><span class="live" aria-hidden="true"></span> ≈8–12k tokens · paid on every call</p>
+          <p class="taxbar-legend">
+            <span><i class="k">base</i> — instructions</span>
+            <span><i class="k">skills</i> — 296 names + descriptions</span>
+            <span><i class="k">msg</i> — the actual request</span>
+          </p>
+        </div>
+        <div class="reveal" style="--d:.2s">
+          <p>
+            The index is the <em>largest single line item</em> in the prompt — and it's the one the agent
+            almost never needs in full. It's paid for on every turn, in every session, for the lifetime
+            of the conversation.
+          </p>
+          <p style="margin-top:14px">
+            The fix isn't a bigger model or a cleverer prompt. It's <strong>not loading the catalog at all</strong> —
+            and looking it up only when a skill is actually needed.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW / PIPELINE ============ -->
+  <section class="pipeline" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="sec-kicker">How it works</p>
+        <h2 id="how-h">Discovery on demand, in one tool call.</h2>
+        <p>
+          A <code>pre_llm_call</code> hook injects a compact 240-char pointer into every session, so the agent
+          knows to reach for <code>skill_search</code> — then the catalog stays out of context until it's needed.
+        </p>
+      </div>
+      <div class="steps">
+        <div class="step reveal" style="--d:.05s">
+          <p class="step-num">01</p>
+          <h3>Agent needs a skill</h3>
+          <p>…and doesn't know its name. No browsing 296 entries, no guessing.</p>
+        </div>
+        <div class="step reveal" style="--d:.2s">
+          <p class="step-num">02</p>
+          <h3>One semantic query</h3>
+          <code>skill_search("plan a feature safely")</code>
+          <p>Query embedded locally by a 45MB model. ~130ms total.</p>
+        </div>
+        <div class="step reveal" style="--d:.35s">
+          <p class="step-num">03</p>
+          <h3>Top-3 matches</h3>
+          <p class="hits">
+            <b>0.438</b> omh-plan<br>
+            <b>0.390</b> spike<br>
+            <b>0.367</b> competitive-landscape-check
+          </p>
+        </div>
+        <div class="step reveal" style="--d:.5s">
+          <p class="step-num">04</p>
+          <h3>Load only what's needed</h3>
+          <code>skill_view("omh-plan")</code>
+          <p>The rest of the catalog never enters context.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MODELS / BENCHMARK ============ -->
+  <section class="bench" id="models" aria-labelledby="models-h">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="sec-kicker">Model choice</p>
+        <h2 id="models-h">Tiny beats big when the texts are short.</h2>
+        <p>
+          Benchmarked on skill-retrieval tasks (5 easy + 4 hard queries). The winner is the smallest model
+          that still discriminates — 45MB, runs on any old CPU, no GPU required.
+        </p>
+      </div>
+      <div class="table-scroll reveal" style="--d:.1s">
+        <table>
+          <caption>embedding models, benchmarked on skill retrieval</caption>
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Size</th>
+              <th scope="col">Dims</th>
+              <th scope="col">Easy</th>
+              <th scope="col">Hard</th>
+              <th scope="col">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="chosen">
+              <td class="model">all-minilm:l6-v2</td>
+              <td class="num"><span class="size-cell"><span class="size-track"><span class="size-bar" style="--w:19%;--d:.15s"></span></span>45MB</span></td>
+              <td class="num">384</td>
+              <td class="num">5/5</td>
+              <td class="num">3/4</td>
+              <td class="verdict chosen"><span class="tick">✓</span> chosen</td>
+            </tr>
+            <tr>
+              <td class="model">granite-embedding:30m</td>
+              <td class="num"><span class="size-cell"><span class="size-track"><span class="size-bar" style="--w:23%;--d:.3s"></span></span>62MB</span></td>
+              <td class="num">384</td>
+              <td class="num">5/5</td>
+              <td class="num">3/4</td>
+              <td class="verdict">tie, larger</td>
+            </tr>
+            <tr>
+              <td class="model">snowflake-arctic-embed:22m</td>
+              <td class="num"><span class="size-cell"><span class="size-track"><span class="size-bar" style="--w:19%;--d:.45s"></span></span>45MB</span></td>
+              <td class="num">384</td>
+              <td class="num">5/5</td>
+              <td class="num">2/4</td>
+              <td class="verdict">weak discrimination</td>
+            </tr>
+            <tr>
+              <td class="model">nomic-embed-text</td>
+              <td class="num"><span class="size-cell"><span class="size-track"><span class="size-bar" style="--w:48%;--d:.6s"></span></span>274MB</span></td>
+              <td class="num">768</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="verdict">overkill for 200 short texts</td>
+            </tr>
+            <tr>
+              <td class="model">bge-m3</td>
+              <td class="num"><span class="size-cell"><span class="size-track"><span class="size-bar" style="--w:100%;--d:.75s"></span></span>1.2GB</span></td>
+              <td class="num">1024</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="verdict">sledgehammer</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="bench-note reveal" style="--d:.2s">
+        <b>bar width ∝ √size</b> — otherwise the 45MB models would be invisible next to bge-m3.
+        Any Ollama embed model can be swapped via <code>SKILL_EMBED_MODEL</code>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ SPECS ============ -->
+  <section class="specs" aria-labelledby="specs-h">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="sec-kicker">The whole footprint</p>
+        <h2 id="specs-h">Small enough to forget it's there.</h2>
+      </div>
+      <div class="specs-grid">
+        <div class="spec reveal" style="--d:.05s">
+          <p class="n"><span data-count="296">0</span></p>
+          <p class="l"><b>skills indexed</b> — native Hermes + full OMH catalog</p>
+        </div>
+        <div class="spec reveal" style="--d:.15s">
+          <p class="n"><span data-count="2.5" data-dec="1">0</span><small>MB</small></p>
+          <p class="l"><b>SQLite index</b> — one file, built once</p>
+        </div>
+        <div class="spec reveal" style="--d:.25s">
+          <p class="n"><span data-count="45">0</span><small>MB</small></p>
+          <p class="l"><b>embedding model</b> — runs on any old CPU</p>
+        </div>
+        <div class="spec reveal" style="--d:.35s">
+          <p class="n">~<span data-count="130">0</span><small>ms</small></p>
+          <p class="l"><b>per query</b> — embed + rank, end to end</p>
+        </div>
+        <div class="spec reveal" style="--d:.45s">
+          <p class="n">MIT</p>
+          <p class="l"><b>licensed</b> — free to use, fork, ship</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INSTALL ============ -->
+  <section class="install" id="install" aria-labelledby="install-h">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="sec-kicker">Install</p>
+        <h2 id="install-h">Up and running in five commands.</h2>
+        <p>
+          Prerequisites: Hermes Agent, <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a> running
+          locally, Python 3.10+. The embedding model is a one-time 45MB pull.
+        </p>
+      </div>
+      <div class="install-grid">
+        <div class="reveal" style="--d:.1s">
+          <ul class="prereq">
+            <li><span class="tick" aria-hidden="true">✓</span> <code>ollama pull all-minilm:l6-v2</code> — 45MB, CPU-friendly</li>
+            <li><span class="tick" aria-hidden="true">✓</span> Copy the plugin into <code>~/.hermes/plugins/skill-search/</code></li>
+            <li><span class="tick" aria-hidden="true">✓</span> <code>hermes plugins enable skill-search</code></li>
+            <li><span class="tick" aria-hidden="true">✓</span> Build the index: <code>python scripts/skill_indexer.py</code></li>
+            <li><span class="tick" aria-hidden="true">✓</span> Restart: <code>hermes gateway restart</code></li>
+          </ul>
+          <p style="margin-top:16px; font-size:13.5px; color:var(--muted)">
+            Verify with <code>hermes plugins list</code> — the <code>[Skill discovery]</code> pointer appears in
+            every session. Or test the index directly with
+            <code>python scripts/skill_search.py "plan a feature safely"</code>.
+          </p>
+        </div>
+        <div class="term install-term reveal" style="--d:.2s">
+          <button class="copy-btn" id="copy-install" type="button">copy</button>
+          <div class="term-head">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="dot" aria-hidden="true"></span>
+            <span class="dot" aria-hidden="true"></span>
+            <span class="term-title">install.sh — 5 commands</span>
+          </div>
+          <div class="term-body">
+            <span class="cmd"><span class="p">$</span> <span class="cm">ollama pull all-minilm:l6-v2</span> <span class="co"># 45MB, CPU-friendly</span></span>
+            <span class="cmd"><span class="p">$</span> <span class="cm">git clone https://github.com/aldow3n-a11y/hermes-skill-search.git</span></span>
+            <span class="cmd"><span class="p">$</span> <span class="cm">cp plugin/__init__.py plugin/plugin.yaml ~/.hermes/plugins/skill-search/</span></span>
+            <span class="cmd"><span class="p">$</span> <span class="cm">hermes plugins enable skill-search</span></span>
+            <span class="cmd"><span class="p">$</span> <span class="cm">python scripts/skill_indexer.py</span> <span class="co"># index native + OMH skills</span></span>
+            <span class="cmd"><span class="p">$</span> <span class="cm">hermes gateway restart</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-in">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <span>hermes-skill-search</span>
+    <span>MIT licensed</span>
+    <span>built for <a href="https://hermes-agent.nousresearch.com/" target="_blank" rel="noopener">Hermes Agent</a></span>
+    <a class="sp" href="https://github.com/aldow3n-a11y/hermes-skill-search" target="_blank" rel="noopener">github.com/aldow3n-a11y/hermes-skill-search</a>
+  </div>
+</footer>
+
+<template id="install-cmds">ollama pull all-minilm:l6-v2
+git clone https://github.com/aldow3n-a11y/hermes-skill-search.git
+cp plugin/__init__.py plugin/plugin.yaml ~/.hermes/plugins/skill-search/
+hermes plugins enable skill-search
+python scripts/skill_indexer.py
+hermes gateway restart</template>
+
+<script>
+(function () {
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* scroll reveal */
+  var reveals = document.querySelectorAll('.reveal');
+  function showAll() { reveals.forEach(function (el) { el.classList.add('in'); }); }
+  if (reduced || !('IntersectionObserver' in window)) {
+    showAll();
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.15 });
+    reveals.forEach(function (el) { io.observe(el); });
+  }
+
+  /* count-up stats */
+  function fmt(v, dec) { return dec ? v.toFixed(dec) : String(Math.round(v)); }
+  function animateCount(el) {
+    var target = parseFloat(el.getAttribute('data-count'));
+    var dec = parseInt(el.getAttribute('data-dec') || '0', 10);
+    if (reduced) { el.textContent = fmt(target, dec); return; }
+    var dur = 900, t0 = null;
+    function step(ts) {
+      if (!t0) t0 = ts;
+      var p = Math.min((ts - t0) / dur, 1);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(target * eased, dec);
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  var stats = document.querySelectorAll('[data-count]');
+  if (!reduced && 'IntersectionObserver' in window) {
+    var io2 = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { animateCount(e.target); io2.unobserve(e.target); }
+      });
+    }, { threshold: 0.5 });
+    stats.forEach(function (el) { io2.observe(el); });
+  } else {
+    stats.forEach(animateCount);
+  }
+
+  /* copy install commands */
+  var copyBtn = document.getElementById('copy-install');
+  if (copyBtn) {
+    var cmds = document.getElementById('install-cmds').content.textContent.trim();
+    copyBtn.addEventListener('click', function () {
+      function done() {
+        copyBtn.textContent = 'copied ✓';
+        setTimeout(function () { copyBtn.textContent = 'copy'; }, 1600);
+      }
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = cmds;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmds).then(done, fallback);
+      } else { fallback(); }
+    });
+  }
+})();
+</script>
+</body>
+</html>
