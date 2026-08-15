@@ -1,6 +1,10 @@
 # hermes-skill-search
 
+[![Landing page](https://img.shields.io/badge/landing%20page-live-2ea44f)](https://aldow3n-a11y.github.io/hermes-skill-search/)
+
 Semantic skill discovery for [Hermes Agent](https://hermes-agent.nousresearch.com/): find the right skill by **intent**, not exact name, using a tiny local embedding model. The full skill catalog (native + OMH) becomes discoverable without loading it into context.
+
+> 🎨 **Animated landing page:** https://aldow3n-a11y.github.io/hermes-skill-search/
 
 ## Why
 
