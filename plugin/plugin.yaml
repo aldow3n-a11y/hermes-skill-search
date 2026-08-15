@@ -1,0 +1,4 @@
+name: skill-search
+display_name: skill-search
+version: 1.0.0
+description: "Semantic skill discovery: find the right Hermes skill by intent via local embeddings (all-minilm:l6-v2). Index built by scripts/skill_indexer.py."
