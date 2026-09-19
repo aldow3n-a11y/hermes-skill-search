@@ -154,6 +154,12 @@ def main():
 
     skills = discover_skills()
     print(f"discovered {len(skills)} skills")
+    found = {s["name"] for s in skills}
+    gone = {r[0] for r in conn.execute("SELECT name FROM skills")} - found
+    if gone:
+        conn.execute(f"DELETE FROM skills WHERE name IN ({','.join('?' * len(gone))})", tuple(gone))
+        conn.commit()
+        print(f"pruned {len(gone)} stale: {sorted(gone)[:5]}")
 
     if args.force:
         conn.execute("DELETE FROM skills")

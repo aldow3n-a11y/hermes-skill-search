@@ -11,7 +11,7 @@ Also injects a compact persistent pointer (pre_llm_call hook) so every
 session knows to reach for skill_search when a task might match a skill.
 
 Index lifecycle:
-  - Build/refresh: python scripts/skill_indexer.py [--force]
+  - Build/refresh: python C:/Users/MnM26/hermes-skill-search/scripts/skill_indexer.py [--force]
   - The tool returns a clear error if the index is missing or stale.
 
 Configuration (all optional, env vars):
@@ -103,7 +103,7 @@ def skill_search_handler(args: dict, **kwargs) -> str:
     if not INDEX_DB.exists():
         return json.dumps({
             "error": "skill index not found",
-            "hint": "run: python scripts/skill_indexer.py",
+            "hint": "run: python C:/Users/MnM26/hermes-skill-search/scripts/skill_indexer.py",
         })
 
     t0 = time.time()
@@ -119,7 +119,7 @@ def skill_search_handler(args: dict, **kwargs) -> str:
     if not rows:
         return json.dumps({
             "error": "skill index is empty",
-            "hint": "run: python scripts/skill_indexer.py",
+            "hint": "run: python C:/Users/MnM26/hermes-skill-search/scripts/skill_indexer.py",
         })
 
     try:
