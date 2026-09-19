@@ -34,6 +34,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 import skill_indexer as si
 found = len(si.discover_skills())
 rows = sqlite3.connect(str(DB)).execute("SELECT COUNT(*) FROM skills").fetchone()[0]
+if si.SKILL_ROOTS and "AppData" not in str(si.SKILL_ROOTS[0]):
+    fails.append(f"first skill root must be the active AppData pool (first-root-wins): {si.SKILL_ROOTS[0]}")
+
 if not DB.exists():
     fails.append(f"index db missing: {DB}")
 elif rows < found:
