@@ -64,13 +64,24 @@ def parse_frontmatter(content: str) -> dict:
     if not m:
         return {}
     fm = {}
-    for line in m.group(1).splitlines():
+    lines = m.group(1).splitlines()
+    for i, line in enumerate(lines):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if ":" in line:
             k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip().strip('"').strip("'")
+            v = v.strip().strip('"').strip("'")
+            if v in (">", "|", ">-", "|-", ">+", "|+"):
+                # YAML folded/literal block scalar: value is the indented lines below
+                blk = []
+                for nxt in lines[i + 1:]:
+                    if nxt.strip() and not nxt[:1].isspace():
+                        break
+                    if nxt.strip():
+                        blk.append(nxt.strip())
+                v = " ".join(blk)
+            fm[k.strip()] = v
     return fm
 
 
@@ -108,14 +119,25 @@ def discover_skills() -> list[dict]:
 # ─── Embedding ─────────────────────────────────────────────────────────────
 
 def embed_text(text: str) -> list[float]:
-    """Embed via Ollama. Keeps model warm with keep_alive=-1."""
-    r = requests.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBED_MODEL, "prompt": text, "keep_alive": -1},
-        timeout=60,
-    )
-    r.raise_for_status()
-    return r.json()["embedding"]
+    """Embed via Ollama. Keeps model warm with keep_alive=-1.
+
+    Dense scripts (CJK descriptions ~1 token/char) exceed all-minilm's context and the
+    server answers 500. Retry with a shorter head instead of failing the skill: English
+    text embeds whole, CJK degrades to its leading trigger phrase.
+    """
+    last = None
+    for t in dict.fromkeys([text, text[:400], text[:250]]):
+        try:
+            r = requests.post(
+                f"{OLLAMA_URL}/api/embeddings",
+                json={"model": EMBED_MODEL, "prompt": t, "keep_alive": -1},
+                timeout=60,
+            )
+            r.raise_for_status()
+            return r.json()["embedding"]
+        except Exception as e:
+            last = e
+    raise last
 
 
 # ─── Index DB ─────────────────────────────────────────────────────────────
